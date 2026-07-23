@@ -1,27 +1,28 @@
+# 🚨 পাইথন ৩.১৪ এরর চিরতরে বন্ধ করার জন্য সবার আগে ইভেন্ট লুপ রেডি করা হলো
+import asyncio
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 import os
 import requests
 import yt_dlp
-import asyncio
 import threading
 from flask import Flask
 from pyrogram import Client, filters
 
-# 🛠️ পাইথনের লেটেস্ট ভার্সনের জন্য Event Loop ফিক্স
-asyncio.set_event_loop(asyncio.new_event_loop())
-
-# --- Render-এর জন্য Dummy Web Server ---
+# --- Render-এর জন্য Dummy Web Server (পোর্ট সমস্যা সমাধানের জন্য) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def health_check():
-    return "TeraVid Bot is Alive and Running!"
+    return "TeraVid Bot is Alive and Running perfectly!"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host="0.0.0.0", port=port)
 
 threading.Thread(target=run_web, daemon=True).start()
-# --------------------------------------
+# -------------------------------------------------------------------
 
 # আপনার টোকেন এবং API
 BOT_TOKEN = '8383008423:AAHF-K6u19fRvu-_bJuMDTMHyf8wPDeRJto'
@@ -52,9 +53,10 @@ async def process_video_task(client):
         status_msg = await client.send_message(chat_id, "🔍 লিংক প্রসেস করা হচ্ছে...")
         
         try:
-            response = await asyncio.to_thread(requests.post, API_URL, json={'url': original_url})
+            # API টাইমআউট যোগ করা হয়েছে (সার্ভার হ্যাং হবে না)
+            response = await asyncio.to_thread(requests.post, API_URL, json={'url': original_url}, timeout=30)
             if response.status_code != 200:
-                raise Exception("API সার্ভার কাজ করছে না।")
+                raise Exception("API সার্ভার এই মুহূর্তে কাজ করছে না।")
                 
             data = response.json()
             
@@ -91,7 +93,7 @@ async def process_video_task(client):
                     
                     await status_msg.edit_text(f"⬆️ টেলিগ্রামে আপলোড হচ্ছে ({index+1}/{len(files)})...")
                     
-                    # থাম্বনেইলের যেকোনো ফরম্যাট অটো ডিটেক্ট করা (.jpg, .webp, .png ইত্যাদি)
+                    # থাম্বনেইলের যেকোনো ফরম্যাট অটো ডিটেক্ট করা
                     thumb_path = None
                     for ext in ['.jpg', '.jpeg', '.webp', '.png']:
                         potential_thumb = f"{safe_title}{ext}"
@@ -99,6 +101,7 @@ async def process_video_task(client):
                             thumb_path = potential_thumb
                             break
                     
+                    # টেলিগ্রামে আপলোড
                     await client.send_video(
                         chat_id, 
                         video=file_name, 
@@ -115,12 +118,17 @@ async def process_video_task(client):
                 await client.send_message(chat_id, "✅ কাজ সফলভাবে শেষ হয়েছে!")
                 
             else:
-                await status_msg.edit_text("❌ ভিডিও লিংকটি কাজ করছে না।")
+                await status_msg.edit_text("❌ ভিডিও লিংকটি কাজ করছে না বা ফাইল পাওয়া যায়নি।")
 
         except Exception as e:
             await status_msg.edit_text(f"❌ এরর: {str(e)}")
+            # ফেইল হলে আবর্জনা পরিষ্কার করা
             for file in os.listdir():
-                if file.endswith(('.mp4', '.jpg', '.webp', '.png', '.jpeg')): os.remove(file)
+                if file.endswith(('.mp4', '.jpg', '.webp', '.png', '.jpeg')): 
+                    try:
+                        os.remove(file)
+                    except:
+                        pass
                 
     is_processing = False
 
@@ -165,5 +173,5 @@ async def channel_link_handler(client, message):
             link_queue.append({'chat_id': message.chat.id, 'url': message.text})
             asyncio.create_task(process_video_task(client))
 
-print("✅ Pro TeraVid Bot is running smoothly with all bug fixes & features...")
+print("✅ Pro TeraVid Bot is running smoothly with 100% bug fixes...")
 app.run()
