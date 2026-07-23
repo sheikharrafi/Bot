@@ -6,6 +6,9 @@ import threading
 from flask import Flask
 from pyrogram import Client, filters
 
+# 🛠️ পাইথনের লেটেস্ট ভার্সনের জন্য Event Loop ফিক্স
+asyncio.set_event_loop(asyncio.new_event_loop())
+
 # --- Render-এর জন্য Dummy Web Server ---
 web_app = Flask(__name__)
 
@@ -63,9 +66,12 @@ async def process_video_task(client):
                     direct_stream_url = video_info.get('stream_url')
                     video_title = video_info.get('name', f'video_{index}')
                     
-                    safe_title = "".join([c for c in video_title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+                    # ফাইলের নাম নিরাপদ করা
+                    safe_title = "".join([c for c in video_title if c.isalnum() or c==' ']).strip()
+                    if not safe_title:
+                        safe_title = f"video_{index}"
+                        
                     file_name = f"{safe_title}.mp4"
-                    thumb_name = f"{safe_title}.jpg"
                     
                     await status_msg.edit_text(f"⬇️ ডাউনলোড হচ্ছে ({index+1}/{len(files)}): \n🎬 {video_title}")
                     
@@ -85,7 +91,13 @@ async def process_video_task(client):
                     
                     await status_msg.edit_text(f"⬆️ টেলিগ্রামে আপলোড হচ্ছে ({index+1}/{len(files)})...")
                     
-                    thumb_path = thumb_name if os.path.exists(thumb_name) else None
+                    # থাম্বনেইলের যেকোনো ফরম্যাট অটো ডিটেক্ট করা (.jpg, .webp, .png ইত্যাদি)
+                    thumb_path = None
+                    for ext in ['.jpg', '.jpeg', '.webp', '.png']:
+                        potential_thumb = f"{safe_title}{ext}"
+                        if os.path.exists(potential_thumb):
+                            thumb_path = potential_thumb
+                            break
                     
                     await client.send_video(
                         chat_id, 
@@ -95,6 +107,7 @@ async def process_video_task(client):
                         supports_streaming=True
                     )
                     
+                    # কাজ শেষে ফাইল ক্লিনআপ
                     if os.path.exists(file_name): os.remove(file_name)
                     if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
                     
@@ -107,7 +120,7 @@ async def process_video_task(client):
         except Exception as e:
             await status_msg.edit_text(f"❌ এরর: {str(e)}")
             for file in os.listdir():
-                if file.endswith(('.mp4', '.jpg', '.webp')): os.remove(file)
+                if file.endswith(('.mp4', '.jpg', '.webp', '.png', '.jpeg')): os.remove(file)
                 
     is_processing = False
 
@@ -116,13 +129,19 @@ async def process_video_task(client):
 async def set_channel_cmd(client, message):
     global target_channel
     try:
-        channel_username = message.text.split(" ")[1]
-        target_channel = channel_username
-        await message.reply(f"✅ চ্যানেল সেট করা হয়েছে: {target_channel}\n\n⚠️ মনে রাখবেন: আমাকে অবশ্যই এই চ্যানেলে **অ্যাডমিন (Admin)** বানাতে হবে, নাহলে আমি লিংকের মেসেজগুলো পড়তে পারব না।")
+        parts = message.text.split(" ")
+        if len(parts) > 1:
+            channel = parts[1].strip()
+            if not channel.startswith("@"):
+                channel = "@" + channel
+            target_channel = channel
+            await message.reply(f"✅ চ্যানেল সেট করা হয়েছে: {target_channel}\n\n⚠️ মনে রাখবেন: আমাকে অবশ্যই এই চ্যানেলে **অ্যাডমিন (Admin)** বানাতে হবে, নাহলে আমি লিংকের মেসেজগুলো পড়তে পারব না।")
+        else:
+            raise Exception()
     except:
-        await message.reply("⚠️ সঠিক নিয়ম: `/setchannel @আপনার_চ্যানেলের_ইউজারনেম`\n(যেমন: /setchannel @mychannel)")
+        await message.reply("⚠️ সঠিক নিয়ম: `/setchannel @আপনার_চ্যানেলের_ইউজারনেম`\n(যেমন: `/setchannel @mychannel`)")
 
-# ইনবক্সে লিংক দিলে সিরিয়ালে যুক্ত করার নিয়ম (যদি আপনি ইনবক্সেও ব্যবহার করতে চান)
+# ইনবক্সে লিংক দিলে সিরিয়ালে যুক্ত করার নিয়ম
 @app.on_message(filters.private & filters.text & filters.regex("http"))
 async def private_link_handler(client, message):
     link_queue.append({'chat_id': message.chat.id, 'url': message.text})
@@ -138,12 +157,13 @@ async def private_link_handler(client, message):
 async def channel_link_handler(client, message):
     global target_channel
     if target_channel:
-        current_chat_username = f"@{message.chat.username}" if message.chat.username else str(message.chat.id)
+        chat_username = f"@{message.chat.username}" if message.chat.username else ""
+        chat_id_str = str(message.chat.id)
         
         # যদি পোস্টটি সেট করা চ্যানেলেই হয়
-        if target_channel == current_chat_username or target_channel == str(message.chat.id):
+        if target_channel.lower() == chat_username.lower() or target_channel == chat_id_str:
             link_queue.append({'chat_id': message.chat.id, 'url': message.text})
             asyncio.create_task(process_video_task(client))
 
-print("✅ Pro TeraVid Bot is running with Auto-Detect, Admin Access & Web Server...")
+print("✅ Pro TeraVid Bot is running smoothly with all bug fixes & features...")
 app.run()
