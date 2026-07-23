@@ -2,7 +2,23 @@ import os
 import requests
 import yt_dlp
 import asyncio
+import threading
+from flask import Flask
 from pyrogram import Client, filters
+
+# --- Render-এর জন্য Dummy Web Server ---
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def health_check():
+    return "TeraVid Bot is Alive and Running!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host="0.0.0.0", port=port)
+
+threading.Thread(target=run_web, daemon=True).start()
+# --------------------------------------
 
 # আপনার টোকেন এবং API
 BOT_TOKEN = '8383008423:AAHF-K6u19fRvu-_bJuMDTMHyf8wPDeRJto'
@@ -12,30 +28,27 @@ API_HASH = "7f7e473950f5b9576c468d6f67347d77"
 
 app = Client("teravid_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# বটের গ্লোবাল ভেরিয়েবল (সিরিয়াল এবং চ্যানেল মনে রাখার জন্য)
+# বটের গ্লোবাল ভেরিয়েবল
 target_channel = None
 link_queue = []
 is_processing = False
 
-# ব্যাকগ্রাউন্ডে সিরিয়াল অনুযায়ী কাজ করার ফাংশন
+# সিরিয়াল অনুযায়ী কাজ করার ফাংশন
 async def process_video_task(client):
     global is_processing
-    # যদি আগে থেকেই কাজ চলতে থাকে, তবে নতুন করে শুরু করবে না
     if is_processing:
         return
     
     is_processing = True
     
-    # লাইনে যতগুলো লিংক আছে, একটা একটা করে প্রসেস করবে
     while len(link_queue) > 0:
         task = link_queue.pop(0)
         chat_id = task['chat_id']
         original_url = task['url']
         
-        status_msg = await client.send_message(chat_id, "🔍 আপনার সিরিয়াল এসেছে! লিংক প্রসেস করা হচ্ছে...")
+        status_msg = await client.send_message(chat_id, "🔍 লিংক প্রসেস করা হচ্ছে...")
         
         try:
-            # API Call (বট যেন হ্যাং না করে তাই ব্যাকগ্রাউন্ডে রান করা হয়েছে)
             response = await asyncio.to_thread(requests.post, API_URL, json={'url': original_url})
             if response.status_code != 200:
                 raise Exception("API সার্ভার কাজ করছে না।")
@@ -64,7 +77,6 @@ async def process_video_task(client):
                         'concurrent_fragment_downloads': 5
                     }
                     
-                    # ডাউনলোড প্রসেস ব্যাকগ্রাউন্ডে পাঠানো হলো
                     def download_vid():
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                             ydl.download([direct_stream_url])
@@ -83,7 +95,6 @@ async def process_video_task(client):
                         supports_streaming=True
                     )
                     
-                    # কাজ শেষে ফাইল ডিলিট
                     if os.path.exists(file_name): os.remove(file_name)
                     if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
                     
@@ -98,7 +109,6 @@ async def process_video_task(client):
             for file in os.listdir():
                 if file.endswith(('.mp4', '.jpg', '.webp')): os.remove(file)
                 
-    # সবগুলো লিংক শেষ হলে প্রসেসিং অফ করে দেবে
     is_processing = False
 
 # বটের ইনবক্সে কমান্ড দিয়ে চ্যানেল সেট করার নিয়ম
@@ -106,14 +116,13 @@ async def process_video_task(client):
 async def set_channel_cmd(client, message):
     global target_channel
     try:
-        # ইউজার থেকে চ্যানেলের নাম নেওয়া হচ্ছে
         channel_username = message.text.split(" ")[1]
         target_channel = channel_username
-        await message.reply(f"✅ চ্যানেল সেট করা হয়েছে: {target_channel}\n\nএখন থেকে এই চ্যানেলে কোনো নতুন লিংক দিলে আমি অটোমেটিক ডাউনলোড করব।")
+        await message.reply(f"✅ চ্যানেল সেট করা হয়েছে: {target_channel}\n\n⚠️ মনে রাখবেন: আমাকে অবশ্যই এই চ্যানেলে **অ্যাডমিন (Admin)** বানাতে হবে, নাহলে আমি লিংকের মেসেজগুলো পড়তে পারব না।")
     except:
         await message.reply("⚠️ সঠিক নিয়ম: `/setchannel @আপনার_চ্যানেলের_ইউজারনেম`\n(যেমন: /setchannel @mychannel)")
 
-# ইনবক্সে লিংক দিলে সিরিয়ালে যুক্ত করার নিয়ম
+# ইনবক্সে লিংক দিলে সিরিয়ালে যুক্ত করার নিয়ম (যদি আপনি ইনবক্সেও ব্যবহার করতে চান)
 @app.on_message(filters.private & filters.text & filters.regex("http"))
 async def private_link_handler(client, message):
     link_queue.append({'chat_id': message.chat.id, 'url': message.text})
@@ -122,20 +131,19 @@ async def private_link_handler(client, message):
     if queue_position > 1:
         await message.reply(f"⏳ লিংকটি সিরিয়ালে যুক্ত হয়েছে। আপনার আগে আরও {queue_position - 1} টি লিংক ডাউনলোডের কাজ চলছে।")
     
-    # ব্যাকগ্রাউন্ড প্রসেস চালু করা
     asyncio.create_task(process_video_task(client))
 
-# চ্যানেলে অটোমেটিক কাজ করার নিয়ম
+# চ্যানেলে অটোমেটিক কাজ করার নিয়ম (অ্যাডমিন থাকলে)
 @app.on_message(filters.channel & filters.text & filters.regex("http"))
 async def channel_link_handler(client, message):
     global target_channel
     if target_channel:
-        # চেক করবে যে মেসেজটি সেট করা চ্যানেলেই এসেছে কি না
         current_chat_username = f"@{message.chat.username}" if message.chat.username else str(message.chat.id)
         
+        # যদি পোস্টটি সেট করা চ্যানেলেই হয়
         if target_channel == current_chat_username or target_channel == str(message.chat.id):
             link_queue.append({'chat_id': message.chat.id, 'url': message.text})
             asyncio.create_task(process_video_task(client))
 
-print("✅ Pro TeraVid Bot is running with Queue System & Dynamic Channel Setting...")
+print("✅ Pro TeraVid Bot is running with Auto-Detect, Admin Access & Web Server...")
 app.run()
